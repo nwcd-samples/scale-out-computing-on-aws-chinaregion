@@ -60,7 +60,7 @@ INSTALLER_DIRECTORY=$(dirname $(realpath "$0"))
 PYTHON_VENV="$INSTALLER_DIRECTORY/resources/src/envs/venv-py-installer"
 
 # NVM path
-NODEJS_BIN="https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.5/install.sh"
+NODEJS_BIN="https://gitee.com/soca-cn/nvm/releases/download/v0.39.5/install.sh"
 
 # Color
 NC="\033[0m"
