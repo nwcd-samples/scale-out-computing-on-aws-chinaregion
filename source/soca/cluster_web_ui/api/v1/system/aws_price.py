@@ -18,9 +18,33 @@ import ast
 import re
 import math
 import config
+import requests
 
 logger = logging.getLogger("api")
 
+def get_cluster_region():
+    # 获取 EC2 实例元数据令牌
+    token_url = "http://169.254.169.254/latest/api/token"
+    headers = {"X-aws-ec2-metadata-token-ttl-seconds": "21600"}
+    response = requests.put(token_url, headers=headers)
+
+    if response.status_code != 200:
+        print(f"Error retrieving metadata token: {response.status_code}")
+        return None
+    else:
+        # 使用令牌获取区域信息
+        token = response.text
+        metadata_url = "http://169.254.169.254/latest/meta-data/placement/region"
+        headers = {"X-aws-ec2-metadata-token": token}
+        response = requests.get(metadata_url, headers=headers)
+        
+        if response.status_code == 200:
+            cluster_region = response.text
+            return cluster_region
+        else:
+            print(f"Error retrieving region: {response.status_code}")
+            return None
+        
 
 def get_compute_pricing(ec2_instance_type):
     pricing = {}
@@ -32,6 +56,8 @@ def get_compute_pricing(ec2_instance_type):
         "ap-southeast-1": "APS1-",
         "ap-southeast-2": "APS1-",
         "ca-central-1": "CAC1-",
+        "cn-north-1": "CNN1-",
+        "cn-northwest-1": "CNW1-",
         "eu-central-1": "EUC1-",
         "eu-north-1": "EUN1-",
         "eu-south-1": "EUS1-",
@@ -45,11 +71,23 @@ def get_compute_pricing(ec2_instance_type):
         "us-west-2": "USW2-",
         "sa-east-1": "SAE1-",
     }
+
+    price_service_region = get_cluster_region()
+
+    if price_service_region in ['cn-north-1', 'cn-northwest-1']:
+        price_service_region = "cn-northwest-1"
+        priceUnit = "CNY"
+    else:
+        price_service_region = "us-east-1"
+        priceUnit = "USD"
+
+
     client_pricing = boto3.client(
-        "pricing", region_name="us-east-1", config=config.boto_extra_config()
+        "pricing", region_name=price_service_region, config=config.boto_extra_config()
     )
     session = boto3.session.Session()
     region = session.region_name
+
     response = client_pricing.get_products(
         ServiceCode="AmazonEC2",
         Filters=[
@@ -74,7 +112,7 @@ def get_compute_pricing(ec2_instance_type):
                             in instance_data["description"].lower()
                         ):
                             pricing["ondemand"] = float(
-                                instance_data["pricePerUnit"]["USD"]
+                                instance_data["pricePerUnit"][priceUnit]
                             )
             else:
                 for skus in v.keys():
@@ -90,7 +128,7 @@ def get_compute_pricing(ec2_instance_type):
                                 in instance_data["description"]
                             ):
                                 pricing["reserved"] = float(
-                                    instance_data["pricePerUnit"]["USD"]
+                                    instance_data["pricePerUnit"][priceUnit]
                                 )
     return pricing
 
