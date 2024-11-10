@@ -113,7 +113,7 @@
                                                               <li><code>cpus</code>: Used to calculate the number of node(s) to provision </li>
                                                               <li><code>scratch_size</code>: Used to estimate the cost of your simulation</li>
                                                               <li><code>root_size</code>: Used to estimate the cost of your simulation</li>
-                                                              <li><code>fsx_size</code>: Used to estimate the cost of your simulation</li>
+                                                              <li><code>fsx_capacity</code>: Used to estimate the cost of your simulation</li>
                                                               <li><code>wall_time</code>: Used to estimate the cost of your simulation</li>
                                                               </div>
                                                             </div>
@@ -148,7 +148,7 @@
                                                           <li><code>cpus</code>: Number of CPUs to allocate, default to 1</li>
                                                           <li><code>scratch_size</code>: Size of /scratch partition in GB, default to 0 GB</li>
                                                           <li><code>root_size</code>: Size of /root partition in GB, default to 10 GB</li>
-                                                          <li><code>fsx_size</code>: Size of FSx for Lustre partition in GB, default to 0 GB</li>
+                                                          <li><code>fsx_capacity</code>: Size of FSx for Lustre partition in GB, default to 0 GB</li>
                                                           <li><code>wall_time</code>: Maximum simulation time (format is HH:MM:SS), default to 60 minutes (01:00:00 or 00:60:00) runtime</li>
                                                            <br>
                                                           Use <code>hidden</code> fields if you want to hardcode the values and prevent user to change them. If not set, SOCA will use the default value to estimate your simulation cost.
