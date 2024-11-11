@@ -24,11 +24,11 @@ function realpath() {
 
 function run_pip() {
   if [[ "$QUIET_MODE" = "true" ]]; then
-    pip3 install --upgrade pip --quiet
-    pip3 install -r resources/src/requirements.txt --quiet
+    pip3 install --upgrade pip --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple
+    pip3 install -r resources/src/requirements.txt --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple
   else
     pip3 install --upgrade pip
-    pip3 install -r resources/src/requirements.txt
+    pip3 install -r resources/src/requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
   fi
 }
 
