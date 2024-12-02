@@ -290,8 +290,9 @@ class ListDesktops(Resource):
 
                 if session_state == "pending" and session_host_private_dns is not False:
                     logger.debug(f"Session State is pending - checking DCV status via LoadBalancer for {session_host_private_dns}")
+                        #f"https://{read_secretmanager.get_soca_configuration()['LoadBalancerDNSName']}/{session_host_private_dns}/",
                     check_dcv_state = get(
-                        f"https://{read_secretmanager.get_soca_configuration()['LoadBalancerDNSName']}/{session_host_private_dns}/",
+                        f"https://{session_host_private_dns}:8443/{session_host_private_dns}/",
                         allow_redirects=False,
                         verify=False,
                     )  # nosec
