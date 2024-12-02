@@ -52,11 +52,55 @@ function Write-ToLog {
     "$FormattedDate $LevelText $Message" | Out-File -FilePath $LogFile -Append
 }
 
-Write-ToLog -Message "Edit dcv.conf"
-[string]$IMDSToken = Invoke-RestMethod -Headers @{"X-aws-ec2-metadata-token-ttl-seconds" = "21600"} -Method PUT -Uri http://169.254.169.254/latest/api/token
+$IMDSToken = Invoke-RestMethod -Headers @{"X-aws-ec2-metadata-token-ttl-seconds" = "21600"} -Method PUT -Uri http://169.254.169.254/latest/api/token
 $Hostname = Invoke-RestMethod -Headers @{"X-aws-ec2-metadata-token" = $IMDSToken} -Method GET -Uri http://169.254.169.254/latest/meta-data/hostname
 $InstanceId = Invoke-RestMethod -Headers @{"X-aws-ec2-metadata-token" = $IMDSToken} -Method GET -Uri http://169.254.169.254/latest/meta-data/instance-id
 $DCVHostAltname = $Hostname.split(".")[0]
+
+$SSMService = Get-Service -Name AmazonSSMAgent -ErrorAction SilentlyContinue
+
+if ($null -eq $SSMService) {
+    Write-ToLog -Message "Install Session Manager plugin"
+    Invoke-WebRequest -uri https://s3.amazonaws.com/session-manager-downloads/plugin/latest/windows/SessionManagerPluginSetup.exe -OutFile C:\Windows\Temp\SessionManagerPluginSetup.exe
+    Invoke-Command -ScriptBlock {Start-Process "C:\Windows\Temp\SessionManagerPluginSetup.exe" -ArgumentList "/quiet" -Wait}
+}
+
+Write-ToLog -Message "Configure Nice DCV"
+$IMDSToken = Invoke-RestMethod -Headers @{"X-aws-ec2-metadata-token-ttl-seconds" = "21600"} -Method PUT -Uri http://169.254.169.254/latest/api/token
+$InstanceType = Invoke-RestMethod -Headers @{'X-aws-ec2-metadata-token' = $IMDSToken} -Method GET -Uri http://169.254.169.254/latest/meta-data/instance-type
+$OSVersion = ((Get-ItemProperty -Path "Microsoft.PowerShell.Core\Registry::\HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName).ProductName) -replace  "[^0-9]" , ''
+
+$DCVService = Get-Service -Name dcvserver -ErrorAction SilentlyContinue
+
+if ($null -eq $DCVService) {
+    if((("$OSVersion" -ne "2019") -and ("$OSVersion" -ne "2022") -and ("$OSVersion" -ne "10") -and ("$OSVersion" -ne "11")) -and (($InstanceType[0] -ne 'g') -or ($InstanceType[0] -ne 'p'))) {
+        $VirtualDisplayDriverRequired = $true
+    }
+
+    if($VirtualDisplayDriverRequired){
+        Start-Job -Name WebReq -ScriptBlock { Invoke-WebRequest -uri https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-virtual-display-x64-Release.msi -OutFile C:\Windows\Temp\DCVDisplayDriver.msi ; Invoke-WebRequest -uri https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-server-x64-Release.msi -OutFile C:\Windows\Temp\DCVServer.msi }
+    } else {
+        Start-Job -Name WebReq -ScriptBlock { Invoke-WebRequest -uri https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-server-x64-Release.msi -OutFile C:\Windows\Temp\DCVServer.msi }
+    }
+
+    Wait-Job -Name WebReq
+    if($VirtualDisplayDriverRequired){
+        Invoke-Command -ScriptBlock {Start-Process "msiexec.exe" -ArgumentList "/I C:\Windows\Temp\DCVDisplayDriver.msi /quiet /norestart" -Wait}
+    }
+
+    Invoke-Command -ScriptBlock {Start-Process "msiexec.exe" -ArgumentList "/I C:\Windows\Temp\DCVServer.msi ADDLOCAL=ALL /quiet /norestart /l*v dcv_install_msi.log " -Wait}
+}
+
+while (-not(Get-Service dcvserver -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 250 }
+$dcvPath = "Microsoft.PowerShell.Core\Registry::\HKEY_USERS\S-1-5-18\Software\GSettings\com\nicesoftware\dcv"
+#Set-ItemProperty -Path "$dcvPath\session-management" -Name create-session -Value 0 -force
+#New-ItemProperty -Path "$dcvPath\connectivity" -Name enable-quic-frontend -PropertyType DWORD -Value 1 -force
+#New-ItemProperty -Path "$dcvPath\security" -Name no-tls-strict -PropertyType DWORD -Value 1 -force
+#Stop-Service dcvserver
+#Start-Sleep -Milliseconds 3000
+#Start-Service dcvserver
+
+Write-ToLog -Message "Edit dcv.conf"
 $WindowsHostname = $env:COMPUTERNAME
 New-Item -Path "Microsoft.PowerShell.Core\Registry::\HKEY_USERS\S-1-5-18\Software\GSettings\com\nicesoftware\dcv\" -Name connectivity -Force
 New-ItemProperty -Path "Microsoft.PowerShell.Core\Registry::\HKEY_USERS\S-1-5-18\Software\GSettings\com\nicesoftware\dcv\connectivity" -Name "web-url-path" -PropertyType "String" -Value "/$DCVHostAltname" -Force
@@ -77,7 +121,7 @@ New-Item -Path "Microsoft.PowerShell.Core\Registry::\HKEY_USERS\S-1-5-18\Softwar
 New-ItemProperty -Path "Microsoft.PowerShell.Core\Registry::\HKEY_USERS\S-1-5-18\Software\GSettings\com\nicesoftware\dcv\security" -Name "disable-display-sleep" -PropertyType "DWord" -Value 1 -Force
 
 Write-ToLog -Message "Change password for local Admin user"
-$Password = ConvertTo-SecureString -String "%SOCA_LOCAL_ADMIN_PASSWORD%" -AsPlainText –Force
+$Password = ConvertTo-SecureString -String "%SOCA_LOCAL_ADMIN_PASSWORD%" -AsPlainText -Force
 $UserAccount = Get-LocalUser -Name "Administrator"
 $UserAccount | Set-LocalUser -Password $Password
 
@@ -86,8 +130,7 @@ $LocalUser = "%SOCA_LOCAL_USER%"
 $ServerInAD = (Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain
 if ($ServerInAD) {
     Write-ToLog -Message "Host already part of AD domain"
-}
-else {
+} else {
      if ("%SOCA_AUTH_PROVIDER%" -eq "activedirectory") {
         Write-ToLog -Message "Joining AD domain"
         $JoinPassword = ConvertTo-SecureString "%SOCA_DS_JOIN_PASSWORD%" -AsPlainText -Force
@@ -95,15 +138,12 @@ else {
         Add-Computer -ComputerName $WindowsHostname -DomainName "%SOCA_DS_DOMAIN%" -Credential $JoinCredentials
         & C:\ProgramData\Amazon\EC2-Windows\Launch\Scripts\InitializeInstance.ps1 -Schedule
         Restart-Computer -Force
-    }
-    else
-    {
+    } else {
         Write-ToLog -Message "Using OpenLDAP. Create local SOCA user"
         $LocalUserExist = Get-LocalUser $LocalUser
         if ($LocalUserExist) {
             Set-LocalUser $LocalUser -Password $Password
-            }
-        else {
+        } else {
             New-LocalUser $LocalUser -Password $Password -PasswordNeverExpires -AccountNeverExpires
         }
     }
@@ -117,8 +157,7 @@ if ("%SOCA_AUTH_PROVIDER%" -eq "activedirectory") {
     New-Item -Path "Microsoft.PowerShell.Core\Registry::\HKEY_USERS\S-1-5-18\Software\GSettings\com\nicesoftware\dcv\" -Name "session-management/automatic-console-session" -Force
     New-ItemProperty -Path "Microsoft.PowerShell.Core\Registry::\HKEY_USERS\S-1-5-18\Software\GSettings\com\nicesoftware\dcv\session-management\automatic-console-session" -Name "owner" -PropertyType "String" -Value "%SOCA_DS_NETBIOS%\$LocalUser" -Force
     New-ItemProperty -Path "Microsoft.PowerShell.Core\Registry::\HKEY_USERS\S-1-5-18\Software\GSettings\com\nicesoftware\dcv\session-management\automatic-console-session" -Name "storage-root" -PropertyType "String" -Value "C:\session-storage" -Force
-}
-else {
+} else {
     Add-LocalGroupMember -Group "Administrators" -Member $LocalUser
     Write-ToLog -Message "Change default owner for the session"
     New-Item -Path "Microsoft.PowerShell.Core\Registry::\HKEY_USERS\S-1-5-18\Software\GSettings\com\nicesoftware\dcv\" -Name "session-management/automatic-console-session" -Force
@@ -180,4 +219,5 @@ foreach($Path in (Get-Disk).Path)
 Write-ToLog -Message "Restart Computer to validate all Windows changes. Use -Force to force reboot even if users are logged in (in case of custom AMI)"
 
 Restart-Computer -Force
+
 </powershell>
